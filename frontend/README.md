@@ -11,7 +11,7 @@ A React-based web application that uses AI to extract tabular data from dense PD
 - **Excel Export**: access the extracted data and downloads it as an Excel file
 - **Test Mode**: Process just a few pages first (kinda works if you know theres a table in those few pages, lol)
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 - **Frontend**: React 
 - **Backend**: FastAPI + Python 
@@ -34,14 +34,14 @@ A React-based web application that uses AI to extract tabular data from dense PD
 
 2. **Backend Setup**
    pip install -r requirements.txt
-   don't forget to actually have the openai api key
+   Don't forget to actually have the openai api key(one that works)
 
 3. **Frontend Setup**
    ```bash
    npm install
    ```
 
-## 🎯 Running the App
+## Running the App
 
 ### Start the Backend (The Brain)
 ```bash
@@ -58,7 +58,7 @@ npm start
 ```
 Frontend will be running on `http://localhost:3000`
 
-## 📖 How to Use
+## How to Use
 
 1. **Upload a PDF** - Click the upload area 
 2. **Set Your Columns** - Tell it what data you want (e.g., "Species, Location, Status")
