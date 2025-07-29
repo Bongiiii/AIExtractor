@@ -203,6 +203,13 @@ function App() {
       URL.revokeObjectURL(downloadLink);
     }
   };
+  const BACKEND_URL = "https://aiextractorautomationpipeline.onrender.com";
+
+fetch(`${BACKEND_URL}/extract`, {
+  method: "POST",
+  body: formData,
+})
+
 
   const renderPreviewTable = () => {
     if (previewData.length === 0) return null;
