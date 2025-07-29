@@ -15,6 +15,9 @@ function App() {
   const [error, setError] = useState("");
   const [samplePages, setSamplePages] = useState("");
 
+  // Define the backend URL at the top
+  const BACKEND_URL = "https://aiextractorautomationpipeline.onrender.com";
+
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     setPdfFile(file);
@@ -85,6 +88,7 @@ function App() {
 
     try {
       console.log("Sending extraction request...");
+      console.log("Backend URL:", BACKEND_URL);
       console.log("Form data:", {
         file: pdfFile.name,
         columns: columnList,
@@ -92,7 +96,8 @@ function App() {
         sample_pages: samplePages ? parseInt(samplePages) : null
       });
       
-      const response = await axios.post("http://localhost:8000/extract", formData, {
+      // Use the BACKEND_URL instead of localhost
+      const response = await axios.post(`${BACKEND_URL}/extract`, formData, {
         responseType: "blob",
         timeout: 300000, // 5 minutes timeout
         headers: {
@@ -172,7 +177,7 @@ function App() {
           setError(`Extraction failed: ${error.response.data?.error || error.response.statusText || 'Server error'}`);
         }
       } else if (error.request) {
-        setError("No response from server. Please check if the backend is running on http://localhost:8000");
+        setError(`No response from server. Please check if the backend is running at ${BACKEND_URL}`);
       } else {
         setError(`Request failed: ${error.message}`);
       }
@@ -203,13 +208,6 @@ function App() {
       URL.revokeObjectURL(downloadLink);
     }
   };
-  const BACKEND_URL = "https://aiextractorautomationpipeline.onrender.com";
-
-fetch(`${BACKEND_URL}/extract`, {
-  method: "POST",
-  body: formData,
-})
-
 
   const renderPreviewTable = () => {
     if (previewData.length === 0) return null;
@@ -300,7 +298,7 @@ fetch(`${BACKEND_URL}/extract`, {
         borderRadius: "8px", 
         boxShadow: "0 2px 4px rgba(0,0,0,0.1)" 
       }}>
-        <h2 style={{ color: "#333", marginBottom: "1.5rem" }}> PDF Table Extractor</h2>
+        <h2 style={{ color: "#333", marginBottom: "1.5rem" }}>🔍 PDF Table Extractor</h2>
 
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: "1.5rem" }}>
@@ -419,7 +417,7 @@ fetch(`${BACKEND_URL}/extract`, {
               transition: "background-color 0.2s"
             }}
           >
-            {isLoading ? " Extracting...grab some water or doom scroll, it maybe a minute" : " Extract Table"}
+            {isLoading ? "🔄 Extracting...grab some water or doom scroll, it maybe a minute" : "🚀 Extract Table"}
           </button>
         </form>
 
