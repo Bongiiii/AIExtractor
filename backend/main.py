@@ -18,7 +18,8 @@ load_dotenv()
 app = FastAPI()
 
 # Frontend URL
-FRONTEND_URL = "https://aiextractorfrontenddeploy.onrender.com"
+FRONTEND_URL_PRIMARY = "https://aiextractorfrontenddeploy.onrender.com"
+FRONTEND_URL_BACKUP = "https://ai-extractor-b5ec-2ldgmjfuw-bongiwe-mkwananzis-projects.vercel.app"
 
 # Allow frontend to communicate with this backend
 app.add_middleware(
