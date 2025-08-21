@@ -11,13 +11,14 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataExtractor import EnhancedPDFExtractor
 from dotenv import load_dotenv
+import tempfile
 
 # Load environment variables
 load_dotenv()
 
 app = FastAPI()
 
-# Frontend URL
+# Frontend URLs
 FRONTEND_URL_PRIMARY = "https://aiextractorfrontenddeploy.onrender.com"
 FRONTEND_URL_BACKUP = "https://ai-extractor-b5ec-2ldgmjfuw-bongiwe-mkwananzis-projects.vercel.app"
 
@@ -25,9 +26,9 @@ FRONTEND_URL_BACKUP = "https://ai-extractor-b5ec-2ldgmjfuw-bongiwe-mkwananzis-pr
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-       FRONTEND_URL_PRIMARY,
+        FRONTEND_URL_PRIMARY,
         FRONTEND_URL_BACKUP,
-        "https://aiextractorfrontenddeploy.onrender.com",  #  primary URL
+        "https://aiextractorfrontenddeploy.onrender.com",  # primary URL
         "https://ai-extractor-b5ec-2ldgmjfuw-bongiwe-mkwananzis-projects.vercel.app",  # backup URL
         "http://localhost:3000",  # For local development
         "http://127.0.0.1:3000",  # For local development
@@ -37,9 +38,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Ensure folders exist
-os.makedirs("uploaded", exist_ok=True)
-os.makedirs("extracted_tables", exist_ok=True)
+# For Vercel, use temporary directories instead of persistent folders
+def ensure_temp_dirs():
+    """Create temporary directories for file operations"""
+    try:
+        # On Vercel, use /tmp which is writable
+        upload_dir = "/tmp/uploaded"
+        extract_dir = "/tmp/extracted_tables"
+        os.makedirs(upload_dir, exist_ok=True)
+        os.makedirs(extract_dir, exist_ok=True)
+        return upload_dir, extract_dir
+    except:
+        # Fallback for local development
+        os.makedirs("uploaded", exist_ok=True)
+        os.makedirs("extracted_tables", exist_ok=True)
+        return "uploaded", "extracted_tables"
 
 # Global executor for running CPU-intensive tasks
 executor = ThreadPoolExecutor(max_workers=2)
@@ -72,9 +85,11 @@ async def extract_table(
     sample_pages: Optional[int] = Form(None)
 ):
     temp_filename = None
+    upload_dir, extract_dir = ensure_temp_dirs()
+    
     try:
         print("📥 Request received. Validating inputs...")
-        print(f"🌐 Request from frontend: {FRONTEND_URL}")
+        print(f"🌐 Request from frontend - Primary: {FRONTEND_URL_PRIMARY}, Backup: {FRONTEND_URL_BACKUP}")
         
         # Validate file type
         if not file.filename.lower().endswith('.pdf'):
@@ -83,8 +98,8 @@ async def extract_table(
                 content={"error": "Only PDF files are supported"}
             )
         
-        # Save the uploaded file to disk
-        temp_filename = f"uploaded/{uuid.uuid4()}_{file.filename}"
+        # Save the uploaded file to temporary directory
+        temp_filename = os.path.join(upload_dir, f"{uuid.uuid4()}_{file.filename}")
         with open(temp_filename, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         print(f"✅ File saved as: {temp_filename}")
@@ -130,13 +145,17 @@ async def extract_table(
 
         if output_excel_path and os.path.exists(output_excel_path):
             print(f"📤 Extraction complete. Returning: {output_excel_path}")
+            
+            # Get the requesting origin for CORS
+            request_origin = FRONTEND_URL_PRIMARY  # Default to primary
+            
             return FileResponse(
                 output_excel_path,
                 filename=f"extracted_{file.filename.replace('.pdf', '.xlsx')}",
                 media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 headers={
                     "Content-Disposition": f"attachment; filename=extracted_{file.filename.replace('.pdf', '.xlsx')}",
-                    "Access-Control-Allow-Origin": FRONTEND_URL,
+                    "Access-Control-Allow-Origin": "*",  # Allow both frontends
                     "Access-Control-Allow-Credentials": "true"
                 }
             )
@@ -167,19 +186,25 @@ async def extract_table(
 async def health_check():
     """Health check endpoint"""
     api_key = os.getenv("OPENAI_API_KEY")
+    upload_dir, extract_dir = ensure_temp_dirs()
+    
     return {
         "status": "healthy",
-        "frontend_url": FRONTEND_URL,
+        "platform": "vercel" if os.getenv("VERCEL") else "local",
+        "frontend_primary": FRONTEND_URL_PRIMARY,
+        "frontend_backup": FRONTEND_URL_BACKUP,
         "api_key_configured": bool(api_key),
-        "upload_dir_exist": os.path.exists("uploaded"),
-        "output_dir_exist": os.path.exists("extracted_tables")
+        "upload_dir_exist": os.path.exists(upload_dir),
+        "output_dir_exist": os.path.exists(extract_dir)
     }
 
 @app.get("/")
 async def root():
     return {
         "message": "PDF Table Extractor API is running",
-        "frontend_url": FRONTEND_URL,
+        "platform": "vercel" if os.getenv("VERCEL") else "local",
+        "frontend_primary": FRONTEND_URL_PRIMARY,
+        "frontend_backup": FRONTEND_URL_BACKUP,
         "cors_configured": True
     }
 
@@ -189,17 +214,22 @@ async def options_handler():
     return JSONResponse(
         content={},
         headers={
-            "Access-Control-Allow-Origin": FRONTEND_URL,
+            "Access-Control-Allow-Origin": "*",  # Allow both frontends
             "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
             "Access-Control-Allow-Headers": "*",
             "Access-Control-Allow-Credentials": "true"
         }
     )
 
+# For local development
 if __name__ == "__main__":
     import uvicorn
     # Use environment variable for port, default to 8000
     port = int(os.getenv("PORT", 8000))
     print(f"🚀 Starting server on port {port}")
-    print(f"🌐 Configured for frontend: {FRONTEND_URL}")
+    print(f"🌐 Configured for frontends - Primary: {FRONTEND_URL_PRIMARY}, Backup: {FRONTEND_URL_BACKUP}")
     uvicorn.run(app, host="0.0.0.0", port=port)
+
+# Export for Vercel serverless functions
+# This is crucial - Vercel looks for this
+app = app
