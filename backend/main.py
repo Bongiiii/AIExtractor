@@ -25,8 +25,10 @@ FRONTEND_URL_BACKUP = "https://ai-extractor-b5ec-2ldgmjfuw-bongiwe-mkwananzis-pr
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        FRONTEND_URL,
-        "https://aiextractorfrontenddeploy.onrender.com",
+       FRONTEND_URL_PRIMARY,
+        FRONTEND_URL_BACKUP,
+        "https://aiextractorfrontenddeploy.onrender.com",  #  primary URL
+        "https://ai-extractor-b5ec-2ldgmjfuw-bongiwe-mkwananzis-projects.vercel.app",  # backup URL
         "http://localhost:3000",  # For local development
         "http://127.0.0.1:3000",  # For local development
     ],
