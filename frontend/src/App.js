@@ -15,8 +15,43 @@ function App() {
   const [error, setError] = useState("");
   const [samplePages, setSamplePages] = useState("");
 
-  // Define the backend URL at the top
-  const BACKEND_URL = "https://aiextractorautomationpipeline.onrender.com";
+  // Define backend URLs with primary and backup
+  const BACKEND_URL_PRIMARY = "https://aiextractorautomationpipeline.onrender.com";
+  const BACKEND_URL_BACKUP = "https://ai-extractor-git-main-bongiwe-mkwananzis-projects.vercel.app";
+
+  // Helper function to make API calls with automatic failover
+  const makeApiCall = async (endpoint, config = {}) => {
+    const urls = [BACKEND_URL_PRIMARY, BACKEND_URL_BACKUP];
+    let lastError = null;
+    
+    for (let i = 0; i < urls.length; i++) {
+      try {
+        const url = `${urls[i]}${endpoint}`;
+        console.log(`Attempting API call to: ${urls[i]}`);
+        
+        const response = await axios({
+          ...config,
+          url,
+          timeout: config.timeout || 300000, // 5 minutes default
+        });
+        
+        console.log(`Success with ${urls[i]}`);
+        return response;
+        
+      } catch (error) {
+        console.log(`Failed with ${urls[i]}:`, error.message);
+        lastError = error;
+        
+        // If this was the last URL, we'll throw the error after the loop
+        if (i < urls.length - 1) {
+          console.log(`Trying backup URL...`);
+        }
+      }
+    }
+    
+    // If we get here, all URLs failed
+    throw new Error(`All backend URLs failed. Last error: ${lastError?.message || 'Unknown error'}`);
+  };
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
@@ -88,7 +123,6 @@ function App() {
 
     try {
       console.log("Sending extraction request...");
-      console.log("Backend URL:", BACKEND_URL);
       console.log("Form data:", {
         file: pdfFile.name,
         columns: columnList,
@@ -96,8 +130,10 @@ function App() {
         sample_pages: samplePages ? parseInt(samplePages) : null
       });
       
-      // Use the BACKEND_URL instead of localhost
-      const response = await axios.post(`${BACKEND_URL}/extract`, formData, {
+      // Use the failover API call function
+      const response = await makeApiCall('/extract', {
+        method: 'POST',
+        data: formData,
         responseType: "blob",
         timeout: 300000, // 5 minutes timeout
         headers: {
@@ -177,7 +213,7 @@ function App() {
           setError(`Extraction failed: ${error.response.data?.error || error.response.statusText || 'Server error'}`);
         }
       } else if (error.request) {
-        setError(`No response from server. Please check if the backend is running at ${BACKEND_URL}`);
+        setError(`No response from server. Tried both backend URLs - please check if at least one backend is running.`);
       } else {
         setError(`Request failed: ${error.message}`);
       }
