@@ -15,43 +15,8 @@ function App() {
   const [error, setError] = useState("");
   const [samplePages, setSamplePages] = useState("");
 
-  // Define backend URLs with primary and backup
-  const BACKEND_URL_PRIMARY = "https://aiextractorautomationpipeline.onrender.com";
-  const BACKEND_URL_BACKUP = "https://ai-extractor-git-main-bongiwe-mkwananzis-projects.vercel.app";
-
-  // Helper function to make API calls with automatic failover
-  const makeApiCall = async (endpoint, config = {}) => {
-    const urls = [BACKEND_URL_PRIMARY, BACKEND_URL_BACKUP];
-    let lastError = null;
-    
-    for (let i = 0; i < urls.length; i++) {
-      try {
-        const url = `${urls[i]}${endpoint}`;
-        console.log(`Attempting API call to: ${urls[i]}`);
-        
-        const response = await axios({
-          ...config,
-          url,
-          timeout: config.timeout || 300000, // 5 minutes default
-        });
-        
-        console.log(`Success with ${urls[i]}`);
-        return response;
-        
-      } catch (error) {
-        console.log(`Failed with ${urls[i]}:`, error.message);
-        lastError = error;
-        
-        // If this was the last URL, we'll throw the error after the loop
-        if (i < urls.length - 1) {
-          console.log(`Trying backup URL...`);
-        }
-      }
-    }
-    
-    // If we get here, all URLs failed
-    throw new Error(`All backend URLs failed. Last error: ${lastError?.message || 'Unknown error'}`);
-  };
+  // Define the backend URL at the top
+  const BACKEND_URL = "https://aiextractorautomationpipeline.onrender.com";
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
@@ -70,38 +35,38 @@ function App() {
       setError("Please select a PDF file");
       return false;
     }
-    
+
     if (!pdfFile.name.toLowerCase().endsWith('.pdf')) {
       setError("Please select a valid PDF file");
       return false;
     }
-    
+
     if (!columns.trim()) {
       setError("Please specify at least one column");
       return false;
     }
-    
+
     const columnList = columns.split(',').map(c => c.trim()).filter(c => c);
     if (columnList.length === 0) {
       setError("Please specify valid column names");
       return false;
     }
-    
+
     if (samplePages && (isNaN(samplePages) || parseInt(samplePages) <= 0)) {
       setError("Sample pages must be a positive number");
       return false;
     }
-    
+
     return true;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     if (!validateInputs()) {
       return;
     }
-    
+
     setIsLoading(true);
     setDownloadLink("");
     setPreviewData([]);
@@ -111,29 +76,29 @@ function App() {
 
     const formData = new FormData();
     formData.append("file", pdfFile);
-    
+
     // Parse columns and send as JSON
     const columnList = columns.split(',').map(c => c.trim()).filter(c => c);
     formData.append("columns", JSON.stringify(columnList));
     formData.append("extra_instructions", notes);
-    
+
     if (samplePages && !isNaN(samplePages) && parseInt(samplePages) > 0) {
       formData.append("sample_pages", parseInt(samplePages));
     }
 
     try {
       console.log("Sending extraction request...");
+      console.log("Backend URL:", BACKEND_URL);
       console.log("Form data:", {
         file: pdfFile.name,
         columns: columnList,
         extra_instructions: notes,
         sample_pages: samplePages ? parseInt(samplePages) : null
       });
-      
-      // Use the failover API call function
-      const response = await makeApiCall('/extract', {
-        method: 'POST',
-        data: formData,
+
+      const response = await axios.post("http://localhost:8000/extract", formData, {
+      // Use the BACKEND_URL instead of localhost
+      const response = await axios.post(`${BACKEND_URL}/extract`, formData, {
         responseType: "blob",
         timeout: 300000, // 5 minutes timeout
         headers: {
@@ -145,10 +110,10 @@ function App() {
       });
 
       console.log("Extraction completed successfully");
-      
+
       // Store the blob for download
       setExtractedBlob(response.data);
-      
+
       // Create download link for preview (will be cleaned up properly)
       const link = URL.createObjectURL(response.data);
       setDownloadLink(link);
@@ -161,9 +126,9 @@ function App() {
           const workbook = XLSX.read(data, { type: "array" });
           const sheet = workbook.Sheets[workbook.SheetNames[0]];
           const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-          
+
           setPreviewData(json);
-          
+
           // Calculate stats
           const stats = {
             totalRows: json.length > 0 ? json.length - 1 : 0, // Subtract header row
@@ -171,7 +136,7 @@ function App() {
             hasData: json.length > 1
           };
           setExtractionStats(stats);
-          
+
           console.log(`Preview loaded: ${stats.totalRows} rows, ${stats.totalColumns} columns`);
         } catch (err) {
           console.error("Error parsing Excel data:", err);
@@ -191,7 +156,7 @@ function App() {
         } : null,
         request: error.request ? "Request made but no response" : null
       });
-      
+
       if (error.response) {
         // Server responded with error
         if (error.response.data instanceof Blob) {
@@ -213,7 +178,8 @@ function App() {
           setError(`Extraction failed: ${error.response.data?.error || error.response.statusText || 'Server error'}`);
         }
       } else if (error.request) {
-        setError(`No response from server. Tried both backend URLs - please check if at least one backend is running.`);
+        setError("No response from server. Please check if the backend is running on http://localhost:8000");
+        setError(`No response from server. Please check if the backend is running at ${BACKEND_URL}`);
       } else {
         setError(`Request failed: ${error.message}`);
       }
@@ -244,13 +210,20 @@ function App() {
       URL.revokeObjectURL(downloadLink);
     }
   };
+  const BACKEND_URL = "https://aiextractorautomationpipeline.onrender.com";
+
+fetch(`${BACKEND_URL}/extract`, {
+  method: "POST",
+  body: formData,
+})
+
 
   const renderPreviewTable = () => {
     if (previewData.length === 0) return null;
-    
+
     const maxPreviewRows = 20; // Limit preview to first 20 rows
     const previewRows = previewData.slice(0, maxPreviewRows);
-    
+
     return (
       <div style={{ marginTop: "2rem", overflowX: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
@@ -262,7 +235,7 @@ function App() {
             </div>
           )}
         </div>
-        
+
         <table 
           border="1" 
           cellPadding="8" 
@@ -309,7 +282,7 @@ function App() {
             ))}
           </tbody>
         </table>
-        
+
         {previewData.length > maxPreviewRows && (
           <div style={{ textAlign: "center", padding: "1rem", fontStyle: "italic", color: "#666" }}>
             ... and {previewData.length - maxPreviewRows} more rows. Download the full file to see all data.
@@ -334,6 +307,7 @@ function App() {
         borderRadius: "8px", 
         boxShadow: "0 2px 4px rgba(0,0,0,0.1)" 
       }}>
+        <h2 style={{ color: "#333", marginBottom: "1.5rem" }}> PDF Table Extractor</h2>
         <h2 style={{ color: "#333", marginBottom: "1.5rem" }}>🔍 PDF Table Extractor</h2>
 
         <form onSubmit={handleSubmit}>
@@ -453,6 +427,7 @@ function App() {
               transition: "background-color 0.2s"
             }}
           >
+            {isLoading ? " Extracting...grab some water or doom scroll, it maybe a minute" : " Extract Table"}
             {isLoading ? "🔄 Extracting...grab some water or doom scroll, it maybe a minute" : "🚀 Extract Table"}
           </button>
         </form>
