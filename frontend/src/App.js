@@ -16,7 +16,7 @@ function App() {
   const [samplePages, setSamplePages] = useState("");
 
   // backend URL - updated to the server's IP
-  const BACKEND_URL = "http://132.145.199.121";
+  const BACKEND_URL = "http://132.145.199.121:8000";
   
   const handleFileChange = (e) => {
     const file = e.target.files[0];
