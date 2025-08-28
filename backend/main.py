@@ -17,12 +17,22 @@ load_dotenv()
 
 app = FastAPI()
 
-# Simple CORS - allow your frontend
+# Frontend URL
+FRONTEND_URL = "https://aiextractorfrontenddeploy.onrender.com"
+
+# Allow frontend to communicate with this backend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Change to specific IPs in production
+    allow_origins=["*"],  # Set to your frontend domain in production
+    allow_origins=[
+        FRONTEND_URL,
+        "https://aiextractorfrontenddeploy.onrender.com",
+        "http://localhost:3000",  # For local development
+        "http://127.0.0.1:3000",  # For local development
+    ],
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -63,6 +73,7 @@ async def extract_table(
     temp_filename = None
     try:
         print("📥 Request received. Validating inputs...")
+        print(f"🌐 Request from frontend: {FRONTEND_URL}")
 
         # Validate file type
         if not file.filename.lower().endswith('.pdf'):
@@ -122,8 +133,11 @@ async def extract_table(
                 output_excel_path,
                 filename=f"extracted_{file.filename.replace('.pdf', '.xlsx')}",
                 media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                headers={"Content-Disposition": f"attachment; filename=extracted_{file.filename.replace('.pdf', '.xlsx')}"}
                 headers={
-                    "Content-Disposition": f"attachment; filename=extracted_{file.filename.replace('.pdf', '.xlsx')}"
+                    "Content-Disposition": f"attachment; filename=extracted_{file.filename.replace('.pdf', '.xlsx')}",
+                    "Access-Control-Allow-Origin": FRONTEND_URL,
+                    "Access-Control-Allow-Credentials": "true"
                 }
             )
         else:
@@ -155,18 +169,39 @@ async def health_check():
     api_key = os.getenv("OPENAI_API_KEY")
     return {
         "status": "healthy",
-        "api_key_configured": bool(api_key)
+        "frontend_url": FRONTEND_URL,
+        "api_key_configured": bool(api_key),
+        "upload_dir_exist": os.path.exists("uploaded"),
+        "output_dir_exist": os.path.exists("extracted_tables")
     }
 
 @app.get("/")
 async def root():
     return {"message": "PDF Table Extractor API is running"}
+    return {
+        "message": "PDF Table Extractor API is running",
+        "frontend_url": FRONTEND_URL,
+        "cors_configured": True
+    }
 
-# Simple preflight handler
+# Add a preflight handler for CORS
 @app.options("/{full_path:path}")
 async def options_handler():
-    return JSONResponse(content={})
+    return JSONResponse(
+        content={},
+        headers={
+            "Access-Control-Allow-Origin": FRONTEND_URL,
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Credentials": "true"
+        }
+    )
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Use environment variable for port, default to 8000
+    port = int(os.getenv("PORT", 8000))
+    print(f"🚀 Starting server on port {port}")
+    print(f"🌐 Configured for frontend: {FRONTEND_URL}")
+    uvicorn.run(app, host="0.0.0.0", port=port)
