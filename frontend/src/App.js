@@ -15,9 +15,9 @@ function App() {
   const [error, setError] = useState("");
   const [samplePages, setSamplePages] = useState("");
 
-  // Simple backend URL - update this to your server's IP
-  const BACKEND_URL = "http://localhost:8000";
-
+  // backend URL - updated to the server's IP
+  const BACKEND_URL = "http://132.145.199.121";
+  
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     setPdfFile(file);
