@@ -96,7 +96,7 @@ function App() {
         sample_pages: samplePages ? parseInt(samplePages) : null
       });
 
-      const response = await axios.post("http://localhost:8000/extract", formData, {
+      //const response = await axios.post("http://localhost:8000/extract", formData, {
       // Use the BACKEND_URL instead of localhost
       const response = await axios.post(`${BACKEND_URL}/extract`, formData, {
         responseType: "blob",
