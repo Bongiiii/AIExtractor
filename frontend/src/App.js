@@ -98,16 +98,16 @@ function App() {
 
       //const response = await axios.post("http://localhost:8000/extract", formData, {
       // Use the BACKEND_URL instead of localhost
-      const response = await axios.post(`${BACKEND_URL}/extract`, formData, {
-        responseType: "blob",
-        timeout: 300000, // 5 minutes timeout
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        onUploadProgress: (progressEvent) => {
-          console.log(`Upload progress: ${Math.round((progressEvent.loaded * 100) / progressEvent.total)}%`);
-        }
-      });
+      // const response = await axios.post(`${BACKEND_URL}/extract`, formData, {
+      //   responseType: "blob",
+      //   timeout: 300000, // 5 minutes timeout
+      //   headers: {
+      //     'Content-Type': 'multipart/form-data',
+      //   },
+      //   onUploadProgress: (progressEvent) => {
+      //     console.log(`Upload progress: ${Math.round((progressEvent.loaded * 100) / progressEvent.total)}%`);
+      //   }
+      // });
 
       console.log("Extraction completed successfully");
 
