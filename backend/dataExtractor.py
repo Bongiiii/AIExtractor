@@ -4,7 +4,7 @@ import json
 import base64
 import time
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import pandas as pd
 from PIL import Image
 import fitz  # PyMuPDF
@@ -29,7 +29,7 @@ if not OPENAI_API_KEY:
 class EnhancedPDFExtractor:
     def __init__(self, api_key: str):
         """
-        Initialize the Enhanced PDF Table Extractor
+        Initialize the Enhanced PDF Table Extractor with improved token management
         
         Args:
             api_key (str): OpenAI API key
@@ -38,6 +38,12 @@ class EnhancedPDFExtractor:
         self.output_dir = "extracted_tables"
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Output directory: {os.path.abspath(self.output_dir)}")
+        
+        # Token management settings
+        #kinda checking if setting it to 4000 in previous iterations was the issue and not host site 
+        self.max_output_tokens = 16000  # set this to GPT-4o max output tokens
+        self.fallback_tokens = 8000     # Fallback if we hit limits
+        self.min_tokens = 2000          # Minimum for basic extraction
     
     def pdf_to_images(self, pdf_path: str, dpi: int = 200) -> List[Image.Image]:
         """
@@ -76,7 +82,7 @@ class EnhancedPDFExtractor:
     
     def encode_image(self, image: Image.Image) -> str:
         """
-        Encode PIL Image to base64 string
+        Encode PIL Image to base64 string with size optimization
         
         Args:
             image (Image.Image): PIL Image
@@ -84,15 +90,45 @@ class EnhancedPDFExtractor:
         Returns:
             str: Base64 encoded image
         """
+        # Optimizes image size if too large
+        max_size = (2048, 2048)  # Reasonable size for API
+        if image.size[0] > max_size[0] or image.size[1] > max_size[1]:
+            image.thumbnail(max_size, Image.Resampling.LANCZOS)
+            logger.info(f"Resized image to {image.size} for better API performance")
+        
         buffer = io.BytesIO()
-        image.save(buffer, format='PNG')
+        image.save(buffer, format='PNG', optimize=True)
         image_bytes = buffer.getvalue()
         return base64.b64encode(image_bytes).decode('utf-8')
+    
+    def estimate_response_complexity(self, columns: List[str], extra_instructions: str = "") -> int:
+        """
+        Estimate how many tokens we might need based on request complexity
+        
+        Returns:
+            int: Estimated max_tokens needed
+        """
+        base_tokens = 2000  # Base response overhead
+        
+        # Add tokens per column
+        column_tokens = len(columns) * 100  # ~100 tokens per column in response
+        
+        # Add tokens for instructions complexity
+        instruction_tokens = len(extra_instructions.split()) * 5
+        
+        # Assume moderate data density which is adjustable based on document type
+        estimated_rows = 50  # Conservative estimate per page
+        data_tokens = estimated_rows * len(columns) * 20  # ~20 tokens per data field
+        
+        total_estimate = base_tokens + column_tokens + instruction_tokens + data_tokens
+        
+        # Cap at reasonable limits
+        return min(max(total_estimate, self.min_tokens), self.max_output_tokens)
     
     def extract_dense_table_data(self, image: Image.Image, columns: List[str], 
                                extra_instructions: str = "", page_num: int = 0) -> List[Dict[str, Any]]:
         """
-        Enhanced extraction specifically for dense, multi-column scientific documents
+        Enhanced extraction with adaptive token management and chunking support
         
         Args:
             image (Image.Image): PIL Image of the document page
@@ -103,119 +139,239 @@ class EnhancedPDFExtractor:
         Returns:
             List[Dict]: Extracted data rows
         """
-        try:
-            base64_image = self.encode_image(image)
-            
-            columns_str = '", "'.join(columns)
-            
-            # Enhanced prompt specifically for dense scientific documents
-            prompt = f"""
-            CRITICAL: This appears to be a dense, multi-column scientific document with species/taxonomic data. 
-            Your task is to extract ALL tabular data that matches these columns: "{columns_str}"
-
-            DOCUMENT ANALYSIS INSTRUCTIONS:
-            1. This document likely contains species/taxonomic data in a structured format
-            2. Look for patterns like: Scientific names (Latin binomials), Common names, Location data, Status codes
-            3. Data may be organized in multiple columns across the page
-            4. Some rows may span multiple lines due to long scientific names or locations
-            5. Ignore headers like "PROPOSED RULE MAKING", page numbers, and section titles
-            6. Focus on the actual data entries, not the formatting elements
-
-            EXTRACTION STRATEGY:
-            - Scan the ENTIRE page systematically from top to bottom
-            - Look for repeating patterns of data that match the requested columns
-            - Scientific names often follow the pattern: "Genus species" (italicized or not)
-            - Location data might include counties, states, countries
-            - Status information might be coded (like "Ex", "Extinct", "Threatened", etc.)
-            - Extract from ALL visible tabular content
-
-            SPECIFIC COLUMN MATCHING:
-            {self._generate_enhanced_column_definitions(columns)}
-
-            DATA QUALITY RULES:
-            1. Extract EVERY row that contains relevant data - prioritize completeness
-            2. If a field spans multiple lines, combine the text appropriately
-            3. Preserve scientific naming conventions exactly
-            4. Keep location information as detailed as possible
-            5. If status codes are abbreviated, keep them as-is
-            6. For empty/missing fields, use "N/A"
-            7. Remove any obvious formatting artifacts or page headers/footers
-
-            CRITICAL OUTPUT FORMAT:
-            Return a JSON object with this structure:
-            {{
-                "extracted_data": [
-                    {{{", ".join([f'"{col}": "extracted_value"' for col in columns])}}},
-                    {{{", ".join([f'"{col}": "extracted_value"' for col in columns])}}},
-                    ... (continue for ALL data rows found)
-                ],
-                "total_rows": actual_number_of_rows_extracted,
-                "extraction_notes": "observations about data density, formatting challenges, etc.",
-                "confidence_level": "high/medium/low based on text clarity"
-            }}
-
-            ADDITIONAL CONTEXT:
-            {extra_instructions if extra_instructions else "No additional context provided."}
-
-            IMPORTANT: Dense scientific documents often contain many rows per page. 
-            Make sure you're not missing large sections of data. Be thorough and systematic.
-            If you find obvious tabular structures, extract ALL rows from them.
-            """
-            
-            response = self.client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{base64_image}"
-                                }
-                            }
-                        ]
-                    }
-                ],
-                max_tokens=4000,
-                temperature=0.05
-            )
-            
-            # Parse the JSON response
-            response_text = response.choices[0].message.content
-            logger.info(f"Raw response from OpenAI (Page {page_num + 1}): {response_text[:200]}...")
-            
-            # Clean up the response to extract JSON
-            if "```json" in response_text:
-                json_start = response_text.find("```json") + 7
-                json_end = response_text.find("```", json_start)
-                response_text = response_text[json_start:json_end].strip()
-            elif "```" in response_text:
-                json_start = response_text.find("```") + 3
-                json_end = response_text.find("```", json_start)
-                response_text = response_text[json_start:json_end].strip()
-            
-            try:
-                result = json.loads(response_text)
-                extracted_data = result.get("extracted_data", [])
-                
-                logger.info(f"Successfully extracted {len(extracted_data)} rows from page {page_num + 1}")
-                if result.get("extraction_notes"):
-                    logger.info(f"Notes: {result.get('extraction_notes')}")
-                if result.get("confidence_level"):
-                    logger.info(f"Confidence: {result.get('confidence_level')}")
-                
-                return extracted_data
-            
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON decode error on page {page_num + 1}: {e}")
-                logger.info("Attempting to parse partial response...")
-                return self._parse_partial_response(response_text, columns)
+        # Estimate tokens needed
+        estimated_tokens = self.estimate_response_complexity(columns, extra_instructions)
+        logger.info(f"Estimated tokens needed: {estimated_tokens}")
         
-        except Exception as e:
-            logger.error(f"Error processing page {page_num + 1}: {e}")
-            return []
+        # Try extraction with different strategies
+        strategies = [
+            ("full_extraction", estimated_tokens),
+            ("fallback_extraction", self.fallback_tokens),
+            ("minimal_extraction", self.min_tokens)
+        ]
+        
+        for strategy_name, max_tokens in strategies:
+            try:
+                logger.info(f"Trying {strategy_name} with {max_tokens} max tokens")
+                
+                result = self._extract_with_strategy(
+                    image, columns, extra_instructions, page_num, 
+                    max_tokens, strategy_name
+                )
+                
+                if result:
+                    logger.info(f"Success with {strategy_name}: {len(result)} rows extracted")
+                    return result
+                    
+            except Exception as e:
+                logger.warning(f"{strategy_name} failed: {str(e)[:100]}...")
+                continue
+        
+        # If all strategies fail, try chunked approach
+        logger.info("Attempting chunked extraction as fallback")
+        return self._extract_with_chunking(image, columns, extra_instructions, page_num)
+    
+    def _extract_with_strategy(self, image: Image.Image, columns: List[str], 
+                             extra_instructions: str, page_num: int, 
+                             max_tokens: int, strategy: str) -> List[Dict[str, Any]]:
+        """
+        Extract data with a specific token strategy
+        """
+        base64_image = self.encode_image(image)
+        columns_str = '", "'.join(columns)
+        
+        # Adjust prompt complexity based on strategy
+        if strategy == "minimal_extraction":
+            prompt = self._get_minimal_prompt(columns_str, columns, extra_instructions)
+        else:
+            prompt = self._get_full_prompt(columns_str, columns, extra_instructions)
+        
+        response = self.client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=max_tokens,
+            temperature=0.05
+        )
+        
+        # Log token usage
+        if hasattr(response, 'usage') and response.usage:
+            logger.info(f"Token usage - Input: {response.usage.prompt_tokens}, "
+                       f"Output: {response.usage.completion_tokens}, "
+                       f"Total: {response.usage.total_tokens}")
+        
+        # Parse response
+        response_text = response.choices[0].message.content
+        return self._parse_json_response(response_text, columns, page_num)
+    
+    def _extract_with_chunking(self, image: Image.Image, columns: List[str], 
+                              extra_instructions: str, page_num: int) -> List[Dict[str, Any]]:
+        """
+        Fallback chunked extraction for very dense pages
+        """
+        logger.info("Attempting to process page in sections")
+        
+        # Split image into sections if it's very tall
+        width, height = image.size
+        if height > 2000:  # If image is very tall, split it
+            sections = []
+            section_height = height // 2
+            
+            for i in range(2):
+                top = i * section_height
+                bottom = min((i + 1) * section_height + 200, height)  # 200px overlap
+                section = image.crop((0, top, width, bottom))
+                sections.append(section)
+            
+            all_data = []
+            for i, section in enumerate(sections):
+                logger.info(f"Processing section {i+1}/{len(sections)}")
+                try:
+                    section_data = self._extract_with_strategy(
+                        section, columns, extra_instructions, 
+                        page_num, self.min_tokens, "section_extraction"
+                    )
+                    if section_data:
+                        all_data.extend(section_data)
+                    time.sleep(1)  # Rate limiting between sections
+                except Exception as e:
+                    logger.warning(f"Section {i+1} failed: {e}")
+                    continue
+            
+            return all_data
+        
+        return []
+    
+    def _get_full_prompt(self, columns_str: str, columns: List[str], extra_instructions: str) -> str:
+        """Get the full detailed prompt"""
+        return f"""
+        CRITICAL: This appears to be a dense, multi-column scientific document with species/taxonomic data. 
+        Your task is to extract ALL tabular data that matches these columns: "{columns_str}"
+
+        DOCUMENT ANALYSIS INSTRUCTIONS:
+        1. This document likely contains species/taxonomic data in a structured format
+        2. Look for patterns like: Scientific names (Latin binomials), Common names, Location data, Status codes
+        3. Data may be organized in multiple columns across the page
+        4. Some rows may span multiple lines due to long scientific names or locations
+        5. Ignore headers like "PROPOSED RULE MAKING", page numbers, and section titles
+        6. Focus on the actual data entries, not the formatting elements
+
+        EXTRACTION STRATEGY:
+        - Scan the ENTIRE page systematically from top to bottom
+        - Look for repeating patterns of data that match the requested columns
+        - Scientific names often follow the pattern: "Genus species" (italicized or not)
+        - Location data might include counties, states, countries
+        - Status information might be coded (like "Ex", "Extinct", "Threatened", etc.)
+        - Extract from ALL visible tabular content
+
+        SPECIFIC COLUMN MATCHING:
+        {self._generate_enhanced_column_definitions(columns)}
+
+        DATA QUALITY RULES:
+        1. Extract EVERY row that contains relevant data - prioritize completeness
+        2. If a field spans multiple lines, combine the text appropriately
+        3. Preserve scientific naming conventions exactly
+        4. Keep location information as detailed as possible
+        5. If status codes are abbreviated, keep them as-is
+        6. For empty/missing fields, use "N/A"
+        7. Remove any obvious formatting artifacts or page headers/footers
+        8. Remove any trailing periods
+
+        CRITICAL OUTPUT FORMAT:
+        Return ONLY a valid JSON object with this structure:
+        {{
+            "extracted_data": [
+                {{{", ".join([f'"{col}": "extracted_value"' for col in columns])}}},
+                {{{", ".join([f'"{col}": "extracted_value"' for col in columns])}}}
+            ],
+            "total_rows": actual_number_of_rows_extracted,
+            "extraction_notes": "brief notes about data found",
+            "confidence_level": "high/medium/low"
+        }}
+
+        ADDITIONAL CONTEXT:
+        {extra_instructions if extra_instructions else "No additional context provided."}
+
+        IMPORTANT: Be systematic and thorough. Extract ALL visible data rows.
+        """
+    
+    def _get_minimal_prompt(self, columns_str: str, columns: List[str], extra_instructions: str) -> str:
+        """Get a simplified prompt for token conservation"""
+        return f"""
+        Extract tabular data from this document for columns: "{columns_str}"
+
+        Focus on:
+        - Species/scientific names (Latin binomials)
+        - Common names
+        - Location information  
+        - Status/conservation data
+
+        Return only valid JSON:
+        {{
+            "extracted_data": [
+                {{{", ".join([f'"{col}": "value"' for col in columns])}}}
+            ]
+        }}
+
+        {extra_instructions}
+        """
+    
+    def _parse_json_response(self, response_text: str, columns: List[str], page_num: int) -> List[Dict[str, Any]]:
+        """
+        Enhanced JSON parsing with better error recovery
+        """
+        logger.debug(f"Raw response from OpenAI (Page {page_num + 1}): {response_text[:200]}...")
+        
+        # Clean up the response to extract JSON
+        cleaned_text = response_text.strip()
+        
+        # Remove markdown code blocks
+        if "```json" in cleaned_text:
+            json_start = cleaned_text.find("```json") + 7
+            json_end = cleaned_text.find("```", json_start)
+            cleaned_text = cleaned_text[json_start:json_end].strip()
+        elif "```" in cleaned_text:
+            json_start = cleaned_text.find("```") + 3
+            json_end = cleaned_text.find("```", json_start)
+            cleaned_text = cleaned_text[json_start:json_end].strip()
+        
+        # Try to find JSON object
+        if not cleaned_text.startswith('{'):
+            # Look for the first { and last }
+            start = cleaned_text.find('{')
+            end = cleaned_text.rfind('}')
+            if start != -1 and end != -1 and end > start:
+                cleaned_text = cleaned_text[start:end+1]
+        
+        try:
+            result = json.loads(cleaned_text)
+            extracted_data = result.get("extracted_data", [])
+            
+            logger.info(f"Successfully extracted {len(extracted_data)} rows from page {page_num + 1}")
+            
+            if result.get("extraction_notes"):
+                logger.debug(f"Notes: {result.get('extraction_notes')}")
+            if result.get("confidence_level"):
+                logger.debug(f"Confidence: {result.get('confidence_level')}")
+            
+            return extracted_data
+        
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error on page {page_num + 1}: {e}")
+            logger.debug("Attempting to parse partial response...")
+            return self._parse_partial_response(cleaned_text, columns)
     
     def _parse_partial_response(self, response_text: str, columns: List[str]) -> List[Dict[str, Any]]:
         """
@@ -285,7 +441,7 @@ class EnhancedPDFExtractor:
                            extra_instructions: str = "", extract_multiple_rows: bool = True,
                            resume_from_page: int = 0, sample_pages: int = None) -> str:
         """
-        Enhanced PDF processing with better error handling and validation
+        Enhanced PDF processing with improved token management and error handling
         
         Args:
             pdf_path (str): Path to the PDF file
@@ -304,6 +460,7 @@ class EnhancedPDFExtractor:
         
         logger.info(f"Processing PDF: {pdf_path}")
         logger.info(f"Extracting columns: {', '.join(columns)}")
+        logger.info(f"Max output tokens: {self.max_output_tokens}")
         
         try:
             # Load previous progress if resuming
@@ -333,6 +490,7 @@ class EnhancedPDFExtractor:
             pages_with_data = 0
             pages_without_data = 0
             total_rows_extracted = len(all_data)
+            failed_pages = []
             
             for page_num in range(resume_from_page, total_pages):
                 progress_percent = ((page_num + 1) / total_pages) * 100
@@ -341,7 +499,7 @@ class EnhancedPDFExtractor:
                 try:
                     image = images[page_num]
                     
-                    # Use enhanced extraction method
+                    # Use enhanced extraction method with token management
                     page_data = self.extract_dense_table_data(
                         image, columns, extra_instructions, page_num
                     )
@@ -361,21 +519,22 @@ class EnhancedPDFExtractor:
                         logger.info(f"No data found on page {page_num + 1}")
                     
                     # Save progress more frequently for large extractions
-                    if (page_num + 1) % 5 == 0:
+                    if (page_num + 1) % 3 == 0:  # More frequent saves
                         self.save_progress(all_data, pdf_name, columns)
                         logger.info(f"Progress saved ({len(all_data)} total rows)")
                     
-                    # Adaptive rate limiting
+                    # Adaptive rate limiting based on API usage
                     if page_num < total_pages - 1:
                         if len(page_data) > 50:
-                            time.sleep(2)
+                            time.sleep(3)  # Longer delay for high-data pages
                         elif len(page_data) > 0:
-                            time.sleep(1)
+                            time.sleep(1.5)
                         else:
                             time.sleep(0.5)
                         
                 except Exception as e:
                     logger.error(f"Error processing page {page_num + 1}: {e}")
+                    failed_pages.append(page_num + 1)
                     continue
             
             # Enhanced final statistics
@@ -383,8 +542,12 @@ class EnhancedPDFExtractor:
             logger.info(f"Total pages processed: {total_pages}")
             logger.info(f"Pages with data: {pages_with_data}")
             logger.info(f"Pages without data: {pages_without_data}")
+            logger.info(f"Failed pages: {len(failed_pages)}")
+            if failed_pages:
+                logger.info(f"Failed page numbers: {failed_pages}")
             if total_pages > 0:
-                logger.info(f"Success rate: {(pages_with_data/total_pages)*100:.1f}%")
+                success_rate = ((total_pages - len(failed_pages))/total_pages)*100
+                logger.info(f"Success rate: {success_rate:.1f}%")
             logger.info(f"Total rows extracted: {len(all_data)}")
             
             if pages_with_data > 0:
@@ -541,13 +704,14 @@ class EnhancedPDFExtractor:
 
 def main_enhanced():
     """
-    Enhanced main function with better user experience
+    Enhanced main function with better user experience and token management
     """
     INPUT_DIRECTORY = "input_pdfs"
     
     print("\n" + "="*70)
     print(" ENHANCED PDF TABLE EXTRACTOR")
     print("   Optimized for Dense Scientific Documents")
+    print("   With Advanced Token Management")
     print("="*70)
     
     # Check API key
@@ -603,13 +767,34 @@ def main_enhanced():
     test_mode = input("Run in test mode (process only first 3 pages)? (y/N): ").strip().lower()
     sample_pages = 3 if test_mode == 'y' else None
     
+    # Token management options
+    print("\n TOKEN MANAGEMENT:")
+    print("1. Auto (recommended) - Adaptive token management")
+    print("2. Conservative - Lower tokens, more reliable")
+    print("3. Aggressive - Maximum tokens, faster but may fail on complex pages")
+    
+    token_choice = input("Choose option (1-3, default 1): ").strip()
+    
     # Initialize enhanced extractor
     try:
         extractor = EnhancedPDFExtractor(OPENAI_API_KEY)
         
+        # Configure token settings based on choice
+        if token_choice == "2":
+            extractor.max_output_tokens = 8000
+            extractor.fallback_tokens = 4000
+            print(" Using conservative token settings")
+        elif token_choice == "3":
+            extractor.max_output_tokens = 16000
+            extractor.fallback_tokens = 12000
+            print(" Using aggressive token settings")
+        else:
+            print(" Using adaptive token settings")
+        
         for pdf_file in pdf_files:
             print(f"\n{'='*70}")
             print(f" PROCESSING: {pdf_file.name}")
+            print(f" Token Strategy: {extractor.max_output_tokens} max tokens")
             print('='*70)
             
             try:
