@@ -92,7 +92,7 @@ function App() {
 
       const response = await axios.post(`${BACKEND_URL}/extract`, formData, {
         responseType: "blob",
-        timeout: 300000, // 5 minutes timeout
+        timeout: 1200000, // 20 minutes timeout
         headers: {
           "Content-Type": "multipart/form-data",
         },
