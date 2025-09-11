@@ -120,6 +120,7 @@ class EnhancedPDFExtractor:
             4. Some rows may span multiple lines due to long scientific names or locations
             5. Ignore headers like "PROPOSED RULE MAKING", page numbers, and section titles
             6. Focus on the actual data entries, not the formatting elements
+            7. Remove all trailing periods
 
             EXTRACTION STRATEGY:
             - Scan the ENTIRE page systematically from top to bottom
@@ -179,7 +180,7 @@ class EnhancedPDFExtractor:
                         ]
                     }
                 ],
-                max_tokens=32000,
+                max_tokens=16300,
                 temperature=0.05
             )
             
