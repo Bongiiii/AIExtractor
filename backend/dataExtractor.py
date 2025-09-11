@@ -140,6 +140,7 @@ class EnhancedPDFExtractor:
             5. If status codes are abbreviated, keep them as-is
             6. For empty/missing fields, use "N/A"
             7. Remove any obvious formatting artifacts or page headers/footers
+            8. If you cannot ascertain what is written or unsure, add astericks to that row of data 
 
             CRITICAL OUTPUT FORMAT:
             Return a JSON object with this structure:
@@ -178,7 +179,7 @@ class EnhancedPDFExtractor:
                         ]
                     }
                 ],
-                max_tokens=4000,
+                max_tokens=32000,
                 temperature=0.05
             )
             
