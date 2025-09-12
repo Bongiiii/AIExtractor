@@ -130,6 +130,16 @@ class EnhancedPDFExtractor:
             - Status information might be coded (like "Ex", "Extinct", "Threatened", etc.)
             - Extract from ALL visible tabular content
 
+            CRITICAL ROW ALIGNMENT AND BLANK CELL HANDLING:
+            - There should be ONE scientific name for each individual row of data
+            - Use the scientific name as the PRIMARY GUIDE for aligning each row of data
+            - If there is NO text in a particular column for that row, leave that field COMPLETELY BLANK (empty string "")
+            - DO NOT populate any value if you don't see actual data for a particular column/row
+            - Some rows may not have a category, common name, or historic distribution value - this is NORMAL
+            - NEVER make assumptions or fill in missing data
+            - NEVER use "N/A", "None", or placeholder text for missing data - use empty string "" instead
+            - Each row must be properly aligned so that data corresponds to the correct scientific name
+
             SPECIFIC COLUMN MATCHING:
             {self._generate_enhanced_column_definitions(columns)}
 
@@ -139,16 +149,18 @@ class EnhancedPDFExtractor:
             3. Preserve scientific naming conventions exactly
             4. Keep location information as detailed as possible
             5. If status codes are abbreviated, keep them as-is
-            6. For empty/missing fields, use "N/A"
+            6. For empty/missing fields, use EMPTY STRING "" (not "N/A" or "None")
             7. Remove any obvious formatting artifacts or page headers/footers
-            8. If you cannot ascertain what is written or unsure, add astericks to that row of data 
+            8. If you cannot ascertain what is written or are unsure, add asterisks to that specific field only
+            9. NEVER duplicate data across multiple rows unless it actually appears that way in the source
+            10. Each scientific name should anchor its own complete row of data
 
             CRITICAL OUTPUT FORMAT:
             Return a JSON object with this structure:
             {{
                 "extracted_data": [
-                    {{{", ".join([f'"{col}": "extracted_value"' for col in columns])}}},
-                    {{{", ".join([f'"{col}": "extracted_value"' for col in columns])}}},
+                    {{{", ".join([f'"{col}": "extracted_value_or_empty_string"' for col in columns])}}},
+                    {{{", ".join([f'"{col}": "extracted_value_or_empty_string"' for col in columns])}}},
                     ... (continue for ALL data rows found)
                 ],
                 "total_rows": actual_number_of_rows_extracted,
@@ -162,6 +174,7 @@ class EnhancedPDFExtractor:
             IMPORTANT: Dense scientific documents often contain many rows per page. 
             Make sure you're not missing large sections of data. Be thorough and systematic.
             If you find obvious tabular structures, extract ALL rows from them.
+            Remember: BLANK cells should be truly blank (empty strings), not filled with placeholder text.
             """
             
             response = self.client.chat.completions.create(
@@ -269,17 +282,17 @@ class EnhancedPDFExtractor:
             if any(word in col_lower for word in ['species', 'scientific', 'name', 'binomial', 'taxa']):
                 definitions.append(f"- {col}: Scientific binomial names (e.g., 'Quercus alba', 'Homo sapiens') - look for Latin genus + species")
             elif any(word in col_lower for word in ['common', 'vernacular', 'english']):
-                definitions.append(f"- {col}: Common English names (e.g., 'White Oak', 'American Robin')")
-            elif any(word in col_lower for word in ['location', 'locality', 'place', 'county', 'state', 'where', 'found', 'range']):
-                definitions.append(f"- {col}: Geographic information (counties, states, countries, specific localities)")
+                definitions.append(f"- {col}: Common English names (e.g., 'White Oak', 'American Robin') - leave BLANK if not present")
+            elif any(word in col_lower for word in ['location', 'locality', 'place', 'county', 'state', 'where', 'found', 'range', 'distribution']):
+                definitions.append(f"- {col}: Geographic information (counties, states, countries, specific localities) - leave BLANK if not present")
             elif any(word in col_lower for word in ['date', 'year', 'time', 'collected', 'observed', 'when']):
-                definitions.append(f"- {col}: Temporal information (dates, years, time periods)")
+                definitions.append(f"- {col}: Temporal information (dates, years, time periods) - leave BLANK if not present")
             elif any(word in col_lower for word in ['status', 'condition', 'conservation', 'threat', 'endangered', 'extinct']):
-                definitions.append(f"- {col}: Conservation/threat status (e.g., 'Extinct', 'Endangered', 'Ex', 'En', status codes)")
+                definitions.append(f"- {col}: Conservation/threat status (e.g., 'Extinct', 'Endangered', 'Ex', 'En', status codes) - leave BLANK if not present")
             elif any(word in col_lower for word in ['family', 'group', 'category', 'class', 'order']):
-                definitions.append(f"- {col}: Taxonomic classification (Family, Order, Class names)")
+                definitions.append(f"- {col}: Taxonomic classification (Family, Order, Class names) - leave BLANK if not present")
             else:
-                definitions.append(f"- {col}: Data that logically corresponds to this column name")
+                definitions.append(f"- {col}: Data that logically corresponds to this column name - leave BLANK if not present")
         
         return "\n".join(definitions)
     
@@ -440,7 +453,7 @@ class EnhancedPDFExtractor:
             sample_row = data[0]
             logger.info("SAMPLE ROW:")
             for col in columns:
-                value = sample_row.get(col, 'N/A')
+                value = sample_row.get(col, '')
                 logger.info(f"{col}: {value}")
     
     def create_excel_file(self, all_data: List[Dict[str, Any]], columns: List[str], 
@@ -457,15 +470,16 @@ class EnhancedPDFExtractor:
         # Ensure all specified columns exist
         for col in columns:
             if col not in df.columns:
-                df[col] = "N/A"
+                df[col] = ""  # Use empty string instead of "N/A"
         
         # Reorder columns and clean data
         df = df[columns].copy()
         
-        # Clean up data
+        # Clean up data - preserve truly blank cells
         for col in columns:
             df[col] = df[col].astype(str).str.strip()
-            df[col] = df[col].replace(['nan', 'None', 'null'], 'N/A')
+            # Replace various null representations with empty string
+            df[col] = df[col].replace(['nan', 'None', 'null', 'N/A', 'n/a'], '')
         
         # Create Excel file with enhanced formatting
         try:
