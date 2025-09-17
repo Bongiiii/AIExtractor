@@ -28,15 +28,18 @@ A React-based web application that uses AI to extract tabular data from dense PD
 - OpenAI API key (worth every $$$)
 - An old PDF(even new) and a deadline hehe
 
-### Setup (The "Please Work" Dance)
+### Setup 
 
 1. **Clone this repo** 
 
 2. **Backend Setup**
+3. ```bash
    pip install -r requirements.txt
-   Don't forget to actually have the openai api key(one that works)
 
-3. **Frontend Setup**
+   #Don't forget to actually have the openai api key(one that works)
+   ```
+   
+4. **Frontend Setup**
    ```bash
    npm install
    ```
