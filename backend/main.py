@@ -17,6 +17,74 @@ load_dotenv()
 
 app = FastAPI()
 
+@app.post("/autoparse_columns")
+async def autoparse_columns(file: UploadFile = File(...)):
+    """
+    Accepts a PDF and returns suggested column names using AI
+    """
+    temp_filename = None
+    upload_dir, _ = ensure_temp_dirs()
+    try:
+        # Save uploaded PDF
+        if not file.filename.lower().endswith('.pdf'):
+            return JSONResponse(status_code=400, content={"error": "Only PDF files are supported"})
+        temp_filename = os.path.join(upload_dir, f"{uuid.uuid4()}_{file.filename}")
+        with open(temp_filename, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        print(f"[Autoparse] File saved as: {temp_filename}")
+
+        # Use the first page for column suggestion
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            return JSONResponse(status_code=500, content={"error": "Missing API key"})
+        extractor = EnhancedPDFExtractor(api_key)
+        images = extractor.pdf_to_images(temp_filename, dpi=200)
+        if not images:
+            return JSONResponse(status_code=500, content={"error": "Could not convert PDF to image"})
+        image = images[0]
+
+        # Prompt AI to suggest columns
+        prompt = (
+            "You are an expert at reading scientific tables in PDFs. "
+            "Given the following page image, identify and return a JSON array of the most likely column names present in the table(s). "
+            "Only return the array, no explanation."
+        )
+        base64_image = extractor.encode_image(image)
+        response = extractor.client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "user", "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
+                ]}
+            ],
+            max_tokens=16000,
+            temperature=0.1
+        )
+        response_text = response.choices[0].message.content.strip()
+        # Try to extract JSON array from response
+        import re, json
+        match = re.search(r'\[(.*?)\]', response_text, re.DOTALL)
+        if match:
+            array_str = '[' + match.group(1) + ']'
+            try:
+                columns = json.loads(array_str)
+                if isinstance(columns, list):
+                    return {"columns": columns}
+            except Exception as e:
+                print(f"[Autoparse] JSON parse error: {e}")
+        return JSONResponse(status_code=500, content={"error": "Could not parse columns from AI response", "raw": response_text})
+    except Exception as e:
+        print(f"[Autoparse] Error: {e}")
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": str(e)})
+    finally:
+        if temp_filename and os.path.exists(temp_filename):
+            try:
+                os.remove(temp_filename)
+            except Exception as e:
+                print(f"[Autoparse] Cleanup error: {e}")
+
 # Frontend URL
 FRONTEND_URL = "https://aiextractorfrontenddeploy.onrender.com"
 
@@ -33,23 +101,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# For Vercel, use temporary directories instead of persistent folders
 def ensure_temp_dirs():
-    """Create temporary directories for file operations"""
-    try:
-        # On Vercel, use /tmp which is writable
-        upload_dir = "/tmp/uploaded"
-        extract_dir = "/tmp/extracted_tables"
-        os.makedirs(upload_dir, exist_ok=True)
-        os.makedirs(extract_dir, exist_ok=True)
-        return upload_dir, extract_dir
-    except:
-        # Fallback for local development
-        os.makedirs("uploaded", exist_ok=True)
-        os.makedirs("extracted_tables", exist_ok=True)
-        return "uploaded", "extracted_tables"
+    """Create directories for file operations"""
+    os.makedirs("uploaded", exist_ok=True)
+    os.makedirs("extracted_tables", exist_ok=True)
+    return "uploaded", "extracted_tables"
 
-# Global executor for running CPU-intensive tasks
+
 executor = ThreadPoolExecutor(max_workers=2)
 
 def run_extraction(temp_filename: str, columns_list: List[str], extra_instructions: str, sample_pages: Optional[int] = None):
@@ -182,7 +240,7 @@ async def health_check():
     
     return {
         "status": "healthy",
-        "platform": "vercel" if os.getenv("VERCEL") else "local",
+        "platform": "render",
         "frontend_url": FRONTEND_URL,
         "api_key_configured": bool(api_key),
         "upload_dir_exist": os.path.exists(upload_dir),
@@ -193,7 +251,7 @@ async def health_check():
 async def root():
     return {
         "message": "PDF Table Extractor API is running",
-        "platform": "vercel" if os.getenv("VERCEL") else "local",
+        "platform": "render",
         "frontend_url": FRONTEND_URL,
         "cors_configured": True
     }
@@ -214,11 +272,14 @@ async def options_handler():
 # For local development
 if __name__ == "__main__":
     import uvicorn
-    # Use environment variable for port, default to 8000
+    # Use environment variable for port, default to 8000 when running locally
     port = int(os.getenv("PORT", 8000))
     print(f" Starting server on port {port}")
     print(f" Configured for frontend: {FRONTEND_URL}")
     uvicorn.run(app, host="0.0.0.0", port=port)
 
-# Export for Vercel serverless functions
+# Export for deployment
 app = app
+
+
+
