@@ -14,6 +14,9 @@ function App() {
   const [extractionStats, setExtractionStats] = useState(null);
   const [error, setError] = useState("");
   const [samplePages, setSamplePages] = useState("");
+  const [columnMode, setColumnMode] = useState(null); // 'auto' or 'manual'
+  const [autoColumns, setAutoColumns] = useState([]);
+  const [isAutoLoading, setIsAutoLoading] = useState(false);
 
   // ✅ Define backend URL once
   const BACKEND_URL = "https://aiextractorautomationpipeline.onrender.com";
@@ -23,11 +26,45 @@ function App() {
     setPdfFile(file);
     setOriginalFilename(file ? file.name : "");
     setError("");
-    // Reset previous results
     setDownloadLink("");
     setPreviewData([]);
     setExtractedBlob(null);
     setExtractionStats(null);
+    setColumnMode(null);
+    setAutoColumns([]);
+  };
+
+  const handleAutoParseColumns = async () => {
+    if (!pdfFile) {
+      setError("Please select a PDF file first");
+      return;
+    }
+    setIsAutoLoading(true);
+    setError("");
+    try {
+      const formData = new FormData();
+      formData.append("file", pdfFile);
+      const response = await axios.post(
+        `${BACKEND_URL}/autoparse_columns`,
+        formData,
+        {
+          timeout: 60000,
+          headers: { "Content-Type": "multipart/form-data" },
+        }
+      );
+      if (response.data && Array.isArray(response.data.columns)) {
+        setAutoColumns(response.data.columns);
+        setColumns(response.data.columns.join(", "));
+        setColumnMode("auto");
+      } else {
+        setError("Could not parse columns from PDF");
+      }
+    } catch (err) {
+      setError(
+        err?.response?.data?.error || "Failed to autoparse columns. Try manual mode."
+      );
+    }
+    setIsAutoLoading(false);
   };
 
   const validateInputs = () => {
@@ -92,7 +129,7 @@ function App() {
 
       const response = await axios.post(`${BACKEND_URL}/extract`, formData, {
         responseType: "blob",
-        timeout: 3600000, // 60 minutes timeout
+        timeout: 3600000, // 1 hour timeout
         headers: {
           "Content-Type": "multipart/form-data",
         },
@@ -372,40 +409,86 @@ function App() {
             )}
           </div>
 
-          {/* --- Columns Input --- */}
-          <div style={{ marginBottom: "1.5rem" }}>
-            <label
-              style={{
-                display: "block",
-                marginBottom: "0.5rem",
-                fontWeight: "bold",
-              }}
-            >
-              Columns (comma-separated):
-            </label>
-            <input
-              type="text"
-              value={columns}
-              onChange={(e) => setColumns(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "0.75rem",
-                border: "1px solid #ddd",
-                borderRadius: "4px",
-                fontSize: "1em",
-              }}
-              placeholder="e.g., Species, Common Name, Location, Status"
-            />
-            <div
-              style={{
-                fontSize: "0.8em",
-                color: "#666",
-                marginTop: "0.25rem",
-              }}
-            >
-              Example: Species, Common Name, Location, Status
+          {/* --- Column Mode Selection --- */}
+          {pdfFile && !columnMode && (
+            <div style={{ marginBottom: "1.5rem" }}>
+              <label style={{ fontWeight: "bold", marginBottom: "0.5rem", display: "block" }}>
+                How would you like to select columns?
+              </label>
+              <button
+                type="button"
+                onClick={handleAutoParseColumns}
+                disabled={isAutoLoading}
+                style={{
+                  marginRight: "1rem",
+                  padding: "0.75rem 1.5rem",
+                  backgroundColor: isAutoLoading ? "#ccc" : "#007bff",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  fontSize: "1em",
+                  cursor: isAutoLoading ? "not-allowed" : "pointer",
+                }}
+              >
+                {isAutoLoading ? "Autoparsing..." : "Autoparse columns with AI"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setColumnMode("manual")}
+                style={{
+                  padding: "0.75rem 1.5rem",
+                  backgroundColor: "#28a745",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  fontSize: "1em",
+                  cursor: "pointer",
+                }}
+              >
+                Manually add columns
+              </button>
             </div>
-          </div>
+          )}
+
+          {/* --- Columns Input --- */}
+          {(columnMode === "manual" || columnMode === "auto") && (
+            <div style={{ marginBottom: "1.5rem" }}>
+              <label
+                style={{
+                  display: "block",
+                  marginBottom: "0.5rem",
+                  fontWeight: "bold",
+                }}
+              >
+                Columns (comma-separated):
+              </label>
+              <input
+                type="text"
+                value={columns}
+                onChange={(e) => setColumns(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "0.75rem",
+                  border: "1px solid #ddd",
+                  borderRadius: "4px",
+                  fontSize: "1em",
+                }}
+                placeholder="e.g., Species, Common Name, Location, Status"
+              />
+              {columnMode === "auto" && autoColumns.length > 0 && (
+                <div style={{ fontSize: "0.8em", color: "#666", marginTop: "0.25rem" }}>
+                  <strong>Suggested columns:</strong> {autoColumns.join(", ")}
+                  <br />
+                  You can edit or confirm these columns before extraction, click on the autoparsed columns to edit.
+                </div>
+              )}
+              {columnMode === "manual" && (
+                <div style={{ fontSize: "0.8em", color: "#666", marginTop: "0.25rem" }}>
+                  Example: Species, Common Name, Location, Status
+                </div>
+              )}
+            </div>
+          )}
 
           {/* --- Sample Pages --- */}
           <div style={{ marginBottom: "1.5rem" }}>
