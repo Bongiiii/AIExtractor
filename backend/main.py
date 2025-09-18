@@ -58,7 +58,7 @@ async def autoparse_columns(file: UploadFile = File(...)):
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
                 ]}
             ],
-            max_tokens=16000,
+            max_tokens=1024,
             temperature=0.1
         )
         response_text = response.choices[0].message.content.strip()
