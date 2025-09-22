@@ -39,13 +39,14 @@ class EnhancedPDFExtractor:
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Output directory: {os.path.abspath(self.output_dir)}")
     
-    def pdf_to_images(self, pdf_path: str, dpi: int = 200) -> List[Image.Image]:
+    def pdf_to_images(self, pdf_path: str, dpi: int = 200, page_ranges: Optional[List[int]] = None) -> List[Image.Image]:
         """
         Convert PDF pages to images with optimized DPI for text recognition
         
         Args:
             pdf_path (str): Path to PDF file
             dpi (int): Resolution for image conversion
+            page_ranges (Optional[List[int]]): List of page indices to extract (0-indexed)
             
         Returns:
             List[Image.Image]: List of PIL Images
@@ -53,8 +54,11 @@ class EnhancedPDFExtractor:
         try:
             doc = fitz.open(pdf_path)
             images = []
-            
-            for page_num in range(len(doc)):
+            if page_ranges is None:
+                page_indices = range(len(doc))
+            else:
+                page_indices = page_ranges
+            for page_num in page_indices:
                 try:
                     page = doc.load_page(page_num)
                     mat = fitz.Matrix(dpi/72, dpi/72)  # Scale factor for DPI
@@ -63,9 +67,8 @@ class EnhancedPDFExtractor:
                     img = Image.open(io.BytesIO(img_data))
                     images.append(img)
                 except Exception as e:
-                    logger.error(f"Error processing page {page_num + 1}: {e}")
+                    logger.error(f"Error processing page {int(page_num) + 1}: {e}")
                     continue
-            
             doc.close()
             logger.info(f"Successfully converted {len(images)} pages to images")
             return images
@@ -238,11 +241,9 @@ class EnhancedPDFExtractor:
         """
         try:
             import re
-            
             # Look for array patterns
             array_pattern = r'\[.*?\]'
             arrays = re.findall(array_pattern, response_text, re.DOTALL)
-            
             for array_str in arrays:
                 try:
                     data = json.loads(array_str)
@@ -251,11 +252,9 @@ class EnhancedPDFExtractor:
                         return data
                 except:
                     continue
-            
             # If no arrays found, try to extract individual objects
             object_pattern = r'\{[^{}]*\}'
             objects = re.findall(object_pattern, response_text)
-            
             recovered_data = []
             for obj_str in objects:
                 try:
@@ -264,14 +263,11 @@ class EnhancedPDFExtractor:
                         recovered_data.append(obj)
                 except:
                     continue
-            
             if recovered_data:
                 logger.info(f"Recovered {len(recovered_data)} rows from individual objects")
                 return recovered_data
-                
         except Exception as e:
             logger.error(f"Failed to parse partial response: {e}")
-        
         return []
     
     def _generate_enhanced_column_definitions(self, columns: List[str]) -> str:
@@ -297,11 +293,12 @@ class EnhancedPDFExtractor:
         return "\n".join(definitions)
     
     def process_pdf_enhanced(self, pdf_path: str, columns: List[str], 
-                           extra_instructions: str = "", extract_multiple_rows: bool = True,
-                           resume_from_page: int = 0, sample_pages: int = None) -> str:
+    extra_instructions: str = "", extract_multiple_rows: bool = True,
+    resume_from_page: int = 0, sample_pages: int = None,
+    mode: str = "scientific", dpi: int = 200, page_ranges: Optional[list] = None) -> str:
         """
         Enhanced PDF processing with better error handling and validation
-        
+
         Args:
             pdf_path (str): Path to the PDF file
             columns (List[str]): List of column names to extract
@@ -309,12 +306,15 @@ class EnhancedPDFExtractor:
             extract_multiple_rows (bool): Whether to extract multiple rows per document
             resume_from_page (int): Page number to resume from (0-indexed)
             sample_pages (int): If provided, only process this many pages (for testing)
-            
+            mode (str): Extraction mode ('scientific' or 'generic')
+            dpi (int): DPI for image conversion
+            page_ranges (Optional[List[int]]): List of page indices to process
+
         Returns:
             str: Path to the created Excel file
         """
         pdf_name = Path(pdf_path).stem
-        columns_suffix = "_".join(col.replace(" ", "")[:3] for col in columns[:3])
+        columns_suffix = "_".join(str(col).replace(" ", "")[:3] for col in columns[:3])
         output_excel_path = os.path.join(self.output_dir, f"{pdf_name}_{columns_suffix}_enhanced.xlsx")
         
         logger.info(f"Processing PDF: {pdf_path}")
@@ -325,47 +325,41 @@ class EnhancedPDFExtractor:
             all_data, prev_columns = self.load_progress(pdf_name)
             if all_data and prev_columns == columns:
                 logger.info(f"Resuming from previous progress ({len(all_data)} rows already extracted)")
-            else:
-                all_data = []
-                resume_from_page = 0
-            
             # Convert PDF to images
             logger.info("Converting PDF to images...")
-            images = self.pdf_to_images(pdf_path, dpi=200)
+            images = self.pdf_to_images(pdf_path, dpi=dpi, page_ranges=page_ranges)
             total_pages = len(images)
-            
             if sample_pages:
                 total_pages = min(sample_pages, total_pages)
                 images = images[:sample_pages]
                 logger.info(f"Processing sample of {total_pages} pages for testing")
-            
             logger.info(f"Successfully converted PDF to {total_pages} images")
-            
             if resume_from_page > 0:
                 logger.info(f"Resuming from page {resume_from_page + 1}")
-            
-            # Process each page with enhanced extraction
+
+            # Initialize counters
             pages_with_data = 0
             pages_without_data = 0
-            total_rows_extracted = len(all_data)
-            
+            total_rows_extracted = 0
+
             for page_num in range(resume_from_page, total_pages):
                 progress_percent = ((page_num + 1) / total_pages) * 100
                 logger.info(f"Processing page {page_num + 1}/{total_pages} ({progress_percent:.1f}%)")
-                
                 try:
                     image = images[page_num]
-                    
-                    # Use enhanced extraction method
-                    page_data = self.extract_dense_table_data(
-                        image, columns, extra_instructions, page_num
-                    )
-                    
+                    # Use extraction method based on mode
+                    if mode == "scientific":
+                        page_data = self.extract_dense_table_data(
+                            image, columns, extra_instructions, page_num
+                        )
+                    else:
+                        page_data = self.extract_generic_table_data(
+                            image, columns, extra_instructions, page_num
+                        )
                     if page_data:
                         # Add page number to each row
                         for row in page_data:
                             row['_page_number'] = page_num + 1
-                        
                         all_data.extend(page_data)
                         pages_with_data += 1
                         total_rows_extracted += len(page_data)
@@ -374,12 +368,10 @@ class EnhancedPDFExtractor:
                     else:
                         pages_without_data += 1
                         logger.info(f"No data found on page {page_num + 1}")
-                    
                     # Save progress more frequently for large extractions
                     if (page_num + 1) % 5 == 0:
                         self.save_progress(all_data, pdf_name, columns)
                         logger.info(f"Progress saved ({len(all_data)} total rows)")
-                    
                     # Adaptive rate limiting
                     if page_num < total_pages - 1:
                         if len(page_data) > 50:
@@ -388,6 +380,9 @@ class EnhancedPDFExtractor:
                             time.sleep(1)
                         else:
                             time.sleep(0.5)
+                except Exception as e:
+                    logger.error(f"Error processing page {page_num + 1}: {e}")
+                    continue
                         
                 except Exception as e:
                     logger.error(f"Error processing page {page_num + 1}: {e}")

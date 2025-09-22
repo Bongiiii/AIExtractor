@@ -14,20 +14,60 @@ function App() {
   const [extractionStats, setExtractionStats] = useState(null);
   const [error, setError] = useState("");
   const [samplePages, setSamplePages] = useState("");
+  const [columnMode, setColumnMode] = useState(null); // 'auto' or 'manual'
+  const [autoColumns, setAutoColumns] = useState([]);
+  const [isAutoLoading, setIsAutoLoading] = useState(false);
+  const [extractMode, setExtractMode] = useState("scientific"); // 'scientific' or 'generic'
+  const [dpi, setDpi] = useState(200); // DPI for magnification
+  const [pageRanges, setPageRanges] = useState(""); // e.g. "1,2,5-7"
 
   // ✅ Define backend URL once
-  const BACKEND_URL = "https://aiextractorautomationpipeline.onrender.com";
+  const BACKEND_URL = "http://localhost:8000";
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     setPdfFile(file);
     setOriginalFilename(file ? file.name : "");
     setError("");
-    // Reset previous results
     setDownloadLink("");
     setPreviewData([]);
     setExtractedBlob(null);
     setExtractionStats(null);
+    setColumnMode(null);
+    setAutoColumns([]);
+  };
+
+  const handleAutoParseColumns = async () => {
+    if (!pdfFile) {
+      setError("Please select a PDF file first");
+      return;
+    }
+    setIsAutoLoading(true);
+    setError("");
+    try {
+      const formData = new FormData();
+      formData.append("file", pdfFile);
+      const response = await axios.post(
+        `${BACKEND_URL}/autoparse_columns`,
+        formData,
+        {
+          timeout: 60000,
+          headers: { "Content-Type": "multipart/form-data" },
+        }
+      );
+      if (response.data && Array.isArray(response.data.columns)) {
+        setAutoColumns(response.data.columns);
+        setColumns(response.data.columns.join(", "));
+        setColumnMode("auto");
+      } else {
+        setError("Could not parse columns from PDF");
+      }
+    } catch (err) {
+      setError(
+        err?.response?.data?.error || "Failed to autoparse columns. Try manual mode."
+      );
+    }
+    setIsAutoLoading(false);
   };
 
   const validateInputs = () => {
@@ -81,7 +121,11 @@ function App() {
     const columnList = columns.split(",").map((c) => c.trim()).filter((c) => c);
     formData.append("columns", JSON.stringify(columnList));
     formData.append("extra_instructions", notes);
-
+    formData.append("mode", extractMode);
+    formData.append("dpi", dpi);
+    if (pageRanges.trim()) {
+      formData.append("page_ranges", pageRanges.trim());
+    }
     if (samplePages && !isNaN(samplePages) && parseInt(samplePages) > 0) {
       formData.append("sample_pages", parseInt(samplePages));
     }
@@ -92,7 +136,7 @@ function App() {
 
       const response = await axios.post(`${BACKEND_URL}/extract`, formData, {
         responseType: "blob",
-        timeout: 1200000, // 20 minutes timeout
+        timeout: 3600000, // 1 hour timeout
         headers: {
           "Content-Type": "multipart/form-data",
         },
@@ -372,38 +416,131 @@ function App() {
             )}
           </div>
 
+          {/* --- Column Mode Selection --- */}
+          {pdfFile && !columnMode && (
+            <div style={{ marginBottom: "1.5rem" }}>
+              <label style={{ fontWeight: "bold", marginBottom: "0.5rem", display: "block" }}>
+                How would you like to select columns?
+              </label>
+              <button
+                type="button"
+                onClick={handleAutoParseColumns}
+                disabled={isAutoLoading}
+                style={{
+                  marginRight: "1rem",
+                  padding: "0.75rem 1.5rem",
+                  backgroundColor: isAutoLoading ? "#ccc" : "#007bff",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  fontSize: "1em",
+                  cursor: isAutoLoading ? "not-allowed" : "pointer",
+                }}
+              >
+                {isAutoLoading ? "Autoparsing..." : "Autoparse columns with AI"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setColumnMode("manual")}
+                style={{
+                  padding: "0.75rem 1.5rem",
+                  backgroundColor: "#28a745",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  fontSize: "1em",
+                  cursor: "pointer",
+                }}
+              >
+                Manually add columns
+              </button>
+            </div>
+          )}
+
           {/* --- Columns Input --- */}
+          {(columnMode === "manual" || columnMode === "auto") && (
+            <div style={{ marginBottom: "1.5rem" }}>
+              <label
+                style={{
+                  display: "block",
+                  marginBottom: "0.5rem",
+                  fontWeight: "bold",
+                }}
+              >
+                Columns (comma-separated):
+              </label>
+              <input
+                type="text"
+                value={columns}
+                onChange={(e) => setColumns(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "0.75rem",
+                  border: "1px solid #ddd",
+                  borderRadius: "4px",
+                  fontSize: "1em",
+                }}
+                placeholder="e.g., Species, Common Name, Location, Status"
+              />
+              {columnMode === "auto" && autoColumns.length > 0 && (
+                <div style={{ fontSize: "0.8em", color: "#666", marginTop: "0.25rem" }}>
+                  <strong>Suggested columns:</strong> {autoColumns.join(", ")}
+                  <br />
+                  You can edit or confirm these columns before extraction.
+                </div>
+              )}
+              {columnMode === "manual" && (
+                <div style={{ fontSize: "0.8em", color: "#666", marginTop: "0.25rem" }}>
+                  Example: Species, Common Name, Location, Status
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* --- Extraction Mode --- */}
           <div style={{ marginBottom: "1.5rem" }}>
-            <label
-              style={{
-                display: "block",
-                marginBottom: "0.5rem",
-                fontWeight: "bold",
-              }}
-            >
-              Columns (comma-separated):
+            <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: "bold" }}>
+              Extraction Mode:
+            </label>
+            <select value={extractMode} onChange={e => setExtractMode(e.target.value)} style={{ padding: "0.75rem", borderRadius: "4px", border: "1px solid #ddd", fontSize: "1em" }}>
+              <option value="scientific">Scientific Table Extraction</option>
+              <option value="generic">Generic Table Extraction</option>
+            </select>
+            <div style={{ fontSize: "0.8em", color: "#666", marginTop: "0.25rem" }}>
+              Choose "Generic" for non-scientific tables or mixed data.
+            </div>
+          </div>
+
+          {/* --- DPI/Magnification --- */}
+          <div style={{ marginBottom: "1.5rem" }}>
+            <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: "bold" }}>
+              Magnification (DPI):
+            </label>
+            <select value={dpi} onChange={e => setDpi(Number(e.target.value))} style={{ padding: "0.75rem", borderRadius: "4px", border: "1px solid #ddd", fontSize: "1em" }}>
+              <option value={100}>100</option>
+              <option value={200}>200 (default)</option>
+              <option value={300}>300</option>
+              <option value={400}>400</option>
+            </select>
+            <div style={{ fontSize: "0.8em", color: "#666", marginTop: "0.25rem" }}>
+              Higher DPI can improve extraction for dense or small text tables.
+            </div>
+          </div>
+
+          {/* --- Page Ranges --- */}
+          <div style={{ marginBottom: "1.5rem" }}>
+            <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: "bold" }}>
+              Page Ranges (e.g., 1,2,5-7):
             </label>
             <input
               type="text"
-              value={columns}
-              onChange={(e) => setColumns(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "0.75rem",
-                border: "1px solid #ddd",
-                borderRadius: "4px",
-                fontSize: "1em",
-              }}
-              placeholder="e.g., Species, Common Name, Location, Status"
+              value={pageRanges}
+              onChange={e => setPageRanges(e.target.value)}
+              style={{ width: "300px", padding: "0.75rem", border: "1px solid #ddd", borderRadius: "4px", fontSize: "1em" }}
+              placeholder="e.g., 1,2,5-7"
             />
-            <div
-              style={{
-                fontSize: "0.8em",
-                color: "#666",
-                marginTop: "0.25rem",
-              }}
-            >
-              Example: Species, Common Name, Location, Status
+            <div style={{ fontSize: "0.8em", color: "#666", marginTop: "0.25rem" }}>
+              Specify which pages to extract. Leave empty to process all pages.
             </div>
           </div>
 
