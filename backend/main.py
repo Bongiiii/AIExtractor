@@ -86,7 +86,7 @@ async def autoparse_columns(file: UploadFile = File(...)):
                 print(f"[Autoparse] Cleanup error: {e}")
 
 # Frontend URL
-FRONTEND_URL = "hhttps://aiextractorfrontenddeploy.onrender.com"
+FRONTEND_URL = "https://aiextractorfrontenddeploy.onrender.com"
 
 # Allow frontend to communicate with this backend
 app.add_middleware(
