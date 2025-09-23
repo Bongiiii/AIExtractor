@@ -117,14 +117,25 @@ def run_extraction(temp_filename: str, columns_list: List[str], extra_instructio
         if not api_key:
             raise ValueError("Missing OPENAI_API_KEY in environment variables.")
         extractor = EnhancedPDFExtractor(api_key)
-        # Convert page_ranges string to list of ints, ignore non-numeric
+        # Convert page_ranges string to list of ints, handle ranges like "3-7" and single pages
         page_ranges_list = None
         if page_ranges:
             page_ranges_list = []
             for p in str(page_ranges).split(','):
                 p = p.strip()
-                if p.isdigit():
-                    page_ranges_list.append(int(p))
+                if '-' in p:
+                    # Handle range like "3-7"
+                    try:
+                        start, end = p.split('-')
+                        start, end = int(start.strip()), int(end.strip())
+                        # Convert to 0-indexed and add all pages in range
+                        for page in range(start - 1, end):
+                            page_ranges_list.append(page)
+                    except ValueError:
+                        continue
+                elif p.isdigit():
+                    # Convert to 0-indexed (user enters 1-based page numbers)
+                    page_ranges_list.append(int(p) - 1)
         return extractor.process_pdf_enhanced(
             pdf_path=temp_filename,
             columns=columns_list,
