@@ -21,8 +21,8 @@ function App() {
   const [dpi, setDpi] = useState(200); // DPI for magnification
   const [pageRanges, setPageRanges] = useState(""); // e.g. "1,2,5-7"
 
-  // ✅ Define backend URL once
-  const BACKEND_URL = "http://localhost:8000";
+  // backend URL 
+  const BACKEND_URL = "https://aiextractorautomationpipeline.onrender.com";
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
