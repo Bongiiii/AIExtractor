@@ -34,7 +34,7 @@ class EnhancedPDFExtractor:
         Args:
             api_key (str): OpenAI API key
         """
-        self.client = OpenAI(api_key=api_key)
+        self.client = OpenAI(api_key=api_key,timeout=180.0)
         self.output_dir = "extracted_tables"
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Output directory: {os.path.abspath(self.output_dir)}")
